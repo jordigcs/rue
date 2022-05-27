@@ -145,7 +145,7 @@ impl<T: ActorTypes + Clone + 'static > Game<T> {
                     println!("{:?}", window_id);
                 },
                 Event::MainEventsCleared => { // Render
-
+                    renderer.render();
                 }
                 _ => (),
             }
