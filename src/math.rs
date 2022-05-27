@@ -1,0 +1,1 @@
+pub struct Vec2(f32, f32);
