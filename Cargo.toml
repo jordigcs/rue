@@ -6,10 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+pollster = "0.2"
 creek = { path="../../creek" }
-lazy_static = "1.4.0"
-vulkano = "0.29.0"
-vulkano-shaders = "0.29.0"
-bytemuck = "1.8.0"
-vulkano-win = "0.29.0"
+raw-window-handle = "0.4.3"
 winit = "0.26.1"
+env_logger = "0.9"
+log = "0.4"
+wgpu = "0.12"
+num-traits = "0.2.15"
