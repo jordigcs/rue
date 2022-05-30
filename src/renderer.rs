@@ -1,6 +1,6 @@
 use std::{rc::Rc};
 
-use wgpu::{Surface, Queue, SurfaceConfiguration, Device};
+use wgpu::{Surface, Queue, SurfaceConfiguration, Device, RenderPipeline};
 use winit::{window::Window, dpi::PhysicalSize};
 
 use crate::helpers::{colors::Color, self};
@@ -17,6 +17,17 @@ impl Default for RenderConfig {
     }
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Vertex {
+    position: [f32; 2],
+    color: [f32; 3],
+}
+
+const VERTICES: &[Vertex] = &[
+    
+];
+
 pub struct Renderer {
     pub window: Rc<Window>,
     surface: Surface,
@@ -25,6 +36,7 @@ pub struct Renderer {
     surface_config: SurfaceConfiguration,
     pub render_config: RenderConfig,
     window_size: PhysicalSize<u32>,
+    render_pipeline: RenderPipeline,
 }
 
 impl Renderer {
@@ -54,6 +66,47 @@ impl Renderer {
             present_mode: wgpu::PresentMode::Mailbox,
         };
         surface.configure(&device, &config);
+
+        let pipeline_shader = device.create_shader_module(&wgpu::include_wgsl!("base_shader.wgsl"));
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Pipeline Layout"),
+            bind_group_layouts: &[],
+            push_constant_ranges: &[],
+        });
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &pipeline_shader,
+                entry_point: "vertex_main",
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &pipeline_shader,
+                entry_point: "fragment_main",
+                targets: &[wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                }]
+            }),
+            primitive: wgpu::PrimitiveState { 
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None, front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+        });
+
         Renderer {
             window,
             surface,
@@ -61,7 +114,8 @@ impl Renderer {
             render_queue: queue,
             surface_config: config,
             render_config,
-            window_size
+            window_size,
+             render_pipeline,
         }
     }
     
@@ -81,7 +135,7 @@ impl Renderer {
             label: Some("Render Encoder"),
         });
         { // Define render pass in new scope because begin_render_pass borrows encoder, which we need later to submit the encoder info to render_queue
-            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[
                     wgpu::RenderPassColorAttachment {
@@ -95,6 +149,9 @@ impl Renderer {
                 ],
                 depth_stencil_attachment: None,
             });
+
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.draw(0..3, 0..1);
         }
         self.render_queue.submit(std::iter::once(encoder.finish()));
         output.present();

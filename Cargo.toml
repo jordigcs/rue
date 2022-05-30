@@ -14,3 +14,4 @@ env_logger = "0.9"
 log = "0.4"
 wgpu = "0.12"
 num-traits = "0.2.15"
+bytemuck = { version = "1.4", features = [ "derive" ] }
