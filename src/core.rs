@@ -1,3 +1,4 @@
+use cgmath::{Quaternion, Vector2};
 use creek::{*, actors::{ActorTypes, ActorHandle, Actor, ActorID}};
 use std::{
     sync::{Arc}, cell::{RefMut, RefCell}, rc::Rc,
@@ -8,7 +9,7 @@ use winit::{
     window::{Window, WindowBuilder}, dpi::{LogicalSize, PhysicalSize},
 };
 
-use crate::renderer::{Renderer, RenderConfig};
+use crate::renderer::{Renderer, RenderConfig, RenderableInstance};
 
 
 #[derive(Debug)]
@@ -39,6 +40,7 @@ pub struct GameVersion(pub u8, pub u8, pub u8);
 #[derive(Debug)]
 pub struct GameInfo {
     pub name: String,
+    pub target_fps: u8,
     pub version: GameVersion,
     pub window_config: WindowConfig,
 }
@@ -47,6 +49,7 @@ impl Default for GameInfo {
     fn default() -> Self {
         Self {
             name: String::from("My Rue Game"),
+            target_fps: 60,
             version: GameVersion(0, 1, 0),
             window_config: WindowConfig::build((640, 480))
         }
@@ -96,10 +99,12 @@ pub struct Game<T: ActorTypes + Clone + 'static> {
     pub running: bool,
     pub game_info: GameInfo,
     pub core_system: Creek<CoreSystems<T>>,
-    pub scene_manager: ActorHandle<CoreSystems<T>>,
+    pub room_manager: ActorHandle<CoreSystems<T>>,
     pub event_loop: Option<EventLoop<()>>,
     pub renderer: Option<Rc<RefCell<Renderer>>>,
-    pub render_config: Option<RenderConfig>,
+    pub render_config: Option<Rc<RefCell<RenderConfig>>>,
+    pub delta_time: f32,
+    pub total_delta_time: f32,
 }
 
 pub struct GameState {
@@ -112,12 +117,14 @@ impl<T: ActorTypes + Clone + 'static > Game<T> {
             running: false,
             game_info,
             core_system: Creek::new(),
-            scene_manager: ActorHandle::default(),
+            room_manager: ActorHandle::default(),
             event_loop: None,
             renderer: None,
             render_config: None,
+            delta_time: 0.01,
+            total_delta_time: 0.0,
         };
-        g.scene_manager = g.core_system.add_actor(CoreSystems::SceneManager(SceneManager {
+        g.room_manager = g.core_system.add_actor(CoreSystems::SceneManager(SceneManager {
             cur_scene: Creek::<T>::new(),
             id: None,
             actions: Vec::new(),
@@ -126,12 +133,12 @@ impl<T: ActorTypes + Clone + 'static > Game<T> {
     }
 
     pub fn with_render_config(mut self, render_config:RenderConfig) -> Self {
-        self.render_config = Some(render_config);
+        self.render_config = Some(Rc::new(RefCell::new(render_config)));
         self
     }
 
     pub fn scene(&mut self) -> RefMut<Option<CoreSystems<T>>> {
-        self.scene_manager.borrow_actor_mut()
+        self.room_manager.borrow_actor_mut()
     }
 
     pub fn run(mut self) {
@@ -148,16 +155,14 @@ impl<T: ActorTypes + Clone + 'static > Game<T> {
         window.set_resizable(self.game_info.window_config.resizable);
         self.event_loop = Some(event_loop);
 
-        let mut render_config = RenderConfig::default();
-        if let Some(r_config) = self.render_config {
-            render_config = r_config;
-        }
 
-        let mut renderer = Rc::new(RefCell::new(pollster::block_on(Renderer::new(window, render_config))));
+        let mut renderer = Rc::new(RefCell::new(pollster::block_on(Renderer::new(window, self.render_config))));
         self.renderer = Some(renderer.clone());
 
-        let min_delta: f32 = 1.0 / 60.0;
+        let min_delta: f32 = 1.0 / (self.game_info.target_fps as f32);
+        println!("{}. {}", self.game_info.target_fps, min_delta);
         let mut current_time = std::time::Instant::now();
+        let mut accumulated_frame_time:f32 = 0.0;
         let mut dir:f64 = 1.0;
         match self.event_loop {
             Some(event_loop) => {
@@ -183,44 +188,46 @@ impl<T: ActorTypes + Clone + 'static > Game<T> {
                                 }
                             }
                         }
-                        _ => (),
-                    }
-
-                    self.scene_manager.edit_actor(|sm| {
-                        if let CoreSystems::SceneManager(s) = sm {
-                            s.cur_scene.propagate_events();
-                        }
-                    });
-
-                    let new_time = std::time::Instant::now();
-                    let mut frame_time = (new_time - current_time).as_secs_f32();
-                    current_time = new_time;
-
-                    while frame_time > 0.0 {
-                        let delta = frame_time.min(min_delta);
-                        self.scene_manager.edit_actor(|s_manager| {
-                            if let CoreSystems::SceneManager(s) = s_manager {
-                                s.cur_scene.push_event(creek::GlobalEventType::Update(delta), None);
+                        Event::MainEventsCleared => {
+        
+                            let new_time = std::time::Instant::now();
+                            let frame_time = (new_time - current_time).as_secs_f32();
+                            current_time = new_time;
+                            
+                            accumulated_frame_time += frame_time;
+        
+                            while accumulated_frame_time > self.delta_time {
+                                self.room_manager.edit_actor(|s_manager| {
+                                    if let CoreSystems::SceneManager(s) = s_manager {
+                                        s.cur_scene.push_event(creek::GlobalEventType::Update(self.delta_time), None);
+                                        s.cur_scene.propagate_events();
+                                    }
+                                });
+                                accumulated_frame_time -= self.delta_time;
+                                self.total_delta_time += self.delta_time;
+                                //overall_time += delta;
+                                if renderer.borrow().render_config.borrow().clear_color.r > 1.0 {
+                                    dir = -1.0;
+                                }
+                                else if renderer.borrow().render_config.borrow().clear_color.r < 0.0 {
+                                    dir = 1.0;
+                                }
+                                renderer.borrow_mut().render_config.borrow_mut().clear_color.r += (self.delta_time as f64) * dir;
                             }
-                        });
-                        frame_time -= delta;
-                        //overall_time += delta;
-                        if renderer.borrow_mut().render_config.clear_color.r > 1.0 {
-                            dir = -1.0;
+                            
+                            match renderer.borrow_mut().render(vec![
+                                RenderableInstance { position: Vector2::new(0.0, 0.0), rotation: Quaternion::new(0.0, 0.0, 0.0, 0.0) }
+                            ]) {
+                                Ok(_) => {}
+                                // Reconfigure the surface if lost
+                                Err(wgpu::SurfaceError::Lost) => renderer.borrow_mut().resize(renderer.borrow().window.inner_size()),
+                                // The system is out of memory, we should probably quit
+                                Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
+                                // All other errors (Outdated, Timeout) should be resolved by the next frame
+                                Err(e) => eprintln!("{:?}", e),
+                            }
                         }
-                        else if renderer.borrow_mut().render_config.clear_color.r < 0.0 {
-                            dir = 1.0;
-                        }
-                        renderer.borrow_mut().render_config.clear_color.r += (delta as f64) * dir;
-                        match renderer.borrow_mut().render() {
-                            Ok(_) => {}
-                            // Reconfigure the surface if lost
-                            Err(wgpu::SurfaceError::Lost) => renderer.borrow_mut().resize(renderer.borrow_mut().window.inner_size()),
-                            // The system is out of memory, we should probably quit
-                            Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-                            // All other errors (Outdated, Timeout) should be resolved by the next frame
-                            Err(e) => eprintln!("{:?}", e),
-                        }
+                        _ => (),
                     }
                 });
             }

@@ -40,3 +40,16 @@ pub mod colors {
         }
     }
 }
+
+pub mod math {
+    use cgmath::Quaternion;
+
+    pub fn euler_roll_to_quat(roll:f32) -> Quaternion<f32> {
+        let cos_roll = (roll * 0.5).cos();
+        let sin_roll = (roll * 0.5).sin();
+
+        let sum_cos_sin = cos_roll + sin_roll;
+        let diff_cos_sin = sin_roll - cos_roll;
+        Quaternion::new(sum_cos_sin, diff_cos_sin, sum_cos_sin, diff_cos_sin)
+    }
+}
